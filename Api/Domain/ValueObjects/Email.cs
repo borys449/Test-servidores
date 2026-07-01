@@ -1,30 +1,25 @@
 using System.Text.RegularExpressions;
+using Vogen;
 
 namespace Api.Domain.ValueObjects;
 
-public record Email
+[ValueObject<string>(conversions: Conversions.EfCoreValueConverter)]
+public partial struct Email
 {
     private static readonly Regex EmailRegex = new(
         @"^[^@\s]+@[^@\s]+\.[^@\s]+$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    public string Value { get; }
+    private static string NormalizeInput(string value) => value?.Trim().ToLowerInvariant() ?? string.Empty;
 
-    private Email(string value)
+    private static Validation Validate(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
-            throw new ArgumentException("El correo electrónico no puede estar vacío.", nameof(value));
+            return Validation.Invalid("El correo electrónico no puede estar vacío.");
 
         if (!EmailRegex.IsMatch(value))
-            throw new ArgumentException("El formato del correo electrónico es inválido.", nameof(value));
+            return Validation.Invalid("El formato del correo electrónico es inválido.");
 
-        Value = value.ToLowerInvariant();
+        return Validation.Ok;
     }
-
-    public static Email Create(string value)
-    {
-        return new Email(value);
-    }
-
-    public override string ToString() => Value;
 }

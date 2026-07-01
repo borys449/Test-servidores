@@ -525,60 +525,76 @@ app.Run();
 
 ## 8. Soluciones Implementadas
 
-### A. Dominio de Usuario (`Domain/`)
-Hemos construido la entidad de negocio `Usuario` utilizando el objeto de valor `Email` para asegurar la consistencia de los datos del correo.
+### A. Clase Base de Entidad (`Domain/Common/`)
+Para mantener el principio DRY y centralizar campos reutilizables en todas nuestras entidades de dominio, se ha definido la clase base abstracta `Entity`.
+
+#### 1. Clase Base `Entity` (`Domain/Common/Entity.cs`)
+```csharp
+namespace Api.Domain.Common;
+
+public abstract class Entity
+{
+    public Guid Id { get; protected set; }
+    public DateTime CreatedAt { get; protected set; } = DateTime.UtcNow;
+
+    protected Entity() { }
+
+    protected Entity(Guid id)
+    {
+        Id = id;
+    }
+}
+```
+
+### B. Dominio de Usuario (`Domain/`)
+Hemos construido la entidad de negocio `Usuario` heredando de la clase base `Entity` y utilizando la librería de generación de código **Vogen** para el objeto de valor `Email`.
 
 #### 1. Objeto de Valor `Email` (`Domain/ValueObjects/Email.cs`)
 ```csharp
 using System.Text.RegularExpressions;
+using Vogen;
 
 namespace Api.Domain.ValueObjects;
 
-public record Email
+[ValueObject<string>(conversions: Conversions.EfCoreValueConverter)]
+public partial struct Email
 {
     private static readonly Regex EmailRegex = new(
         @"^[^@\s]+@[^@\s]+\.[^@\s]+$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
 
-    public string Value { get; }
+    private static string NormalizeInput(string value) => value?.Trim().ToLowerInvariant() ?? string.Empty;
 
-    private Email(string value)
+    private static Validation Validate(string value)
     {
         if (string.IsNullOrWhiteSpace(value))
-            throw new ArgumentException("El correo electrónico no puede estar vacío.", nameof(value));
+            return Validation.Invalid("El correo electrónico no puede estar vacío.");
 
         if (!EmailRegex.IsMatch(value))
-            throw new ArgumentException("El formato del correo electrónico es inválido.", nameof(value));
+            return Validation.Invalid("El formato del correo electrónico es inválido.");
 
-        Value = value.ToLowerInvariant();
+        return Validation.Ok;
     }
-
-    public static Email Create(string value)
-    {
-        return new Email(value);
-    }
-
-    public override string ToString() => Value;
 }
 ```
 
 #### 2. Entidad `Usuario` (`Domain/Entities/Usuario.cs`)
 ```csharp
+using Api.Domain.Common;
 using Api.Domain.ValueObjects;
 
 namespace Api.Domain.Entities;
 
-public class Usuario
+public class Usuario : Entity
 {
-    public Guid Id { get; private set; }
     public string Nombre { get; private set; } = string.Empty;
     public string Apellido { get; private set; } = string.Empty;
-    public Email Email { get; private set; } = null!;
+    public Email Email { get; private set; }
 
     // Constructor requerido por EF Core
-    private Usuario() { }
+    private Usuario() : base() { }
 
-    public Usuario(Guid id, string nombre, string apellido, Email email)
+    public Usuario(Guid id, string nombre, string apellido, Email email) : base(id)
     {
         if (string.IsNullOrWhiteSpace(nombre))
             throw new ArgumentException("El nombre es requerido.", nameof(nombre));
@@ -586,9 +602,6 @@ public class Usuario
         if (string.IsNullOrWhiteSpace(apellido))
             throw new ArgumentException("El apellido es requerido.", nameof(apellido));
 
-        ArgumentNullException.ThrowIfNull(email, nameof(email));
-
-        Id = id;
         Nombre = nombre;
         Apellido = apellido;
         Email = email;
@@ -602,12 +615,282 @@ public class Usuario
         if (string.IsNullOrWhiteSpace(apellido))
             throw new ArgumentException("El apellido no puede estar vacío.", nameof(apellido));
 
-        ArgumentNullException.ThrowIfNull(email, nameof(email));
-
         Nombre = nombre;
         Apellido = apellido;
         Email = email;
     }
 }
+
+### C. Capa de Aplicación (`Application/`)
+
+#### 1. Casos de Uso (Vertical Slices de Usuario)
+
+##### Crear Usuario (`Application/Features/Usuarios/CreateUsuario/`)
+- **`CreateUsuarioCommand.cs`**:
+```csharp
+using Api.Application.Common;
+using MediatR;
+
+namespace Api.Application.Features.Usuarios.CreateUsuario;
+
+public record CreateUsuarioCommand(
+    string Nombre,
+    string Apellido,
+    string Email
+) : IRequest<Result<Guid>>;
 ```
+- **`CreateUsuarioCommandValidator.cs`**:
+```csharp
+using FluentValidation;
+
+namespace Api.Application.Features.Usuarios.CreateUsuario;
+
+public class CreateUsuarioCommandValidator : AbstractValidator<CreateUsuarioCommand>
+{
+    public CreateUsuarioCommandValidator()
+    {
+        RuleFor(x => x.Nombre)
+            .NotEmpty().WithMessage("El nombre es requerido.")
+            .MaximumLength(100).WithMessage("El nombre no puede superar los 100 caracteres.");
+
+        RuleFor(x => x.Apellido)
+            .NotEmpty().WithMessage("El apellido es requerido.")
+            .MaximumLength(100).WithMessage("El apellido no puede superar los 100 caracteres.");
+
+        RuleFor(x => x.Email)
+            .NotEmpty().WithMessage("El correo electrónico es requerido.")
+            .EmailAddress().WithMessage("El formato del correo electrónico es inválido.");
+    }
+}
+```
+- **`CreateUsuarioCommandHandler.cs`**:
+```csharp
+using Api.Application.Common;
+using Api.Domain.Entities;
+using Api.Domain.ValueObjects;
+using Api.Infrastructure.Data;
+using MediatR;
+
+namespace Api.Application.Features.Usuarios.CreateUsuario;
+
+public class CreateUsuarioCommandHandler : IRequestHandler<CreateUsuarioCommand, Result<Guid>>
+{
+    private readonly ApplicationDbContext _context;
+
+    public CreateUsuarioCommandHandler(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<Result<Guid>> Handle(CreateUsuarioCommand request, CancellationToken cancellationToken)
+    {
+        Email email;
+        try
+        {
+            email = Email.From(request.Email);
+        }
+        catch (Exception ex)
+        {
+            return Result.Failure<Guid>(new Error("Usuario.InvalidEmail", ex.Message));
+        }
+
+        var usuario = new Usuario(
+            Guid.NewGuid(),
+            request.Nombre,
+            request.Apellido,
+            email
+        );
+
+        _context.Usuarios.Add(usuario);
+        await _context.SaveChangesAsync(cancellationToken);
+
+        return Result.Success(usuario.Id);
+    }
+}
+```
+
+##### Listar Usuarios (`Application/Features/Usuarios/GetUsuarios/`)
+- **`UsuarioResponse.cs`**:
+```csharp
+namespace Api.Application.Features.Usuarios.GetUsuarios;
+
+public record UsuarioResponse(
+    Guid Id,
+    string Nombre,
+    string Apellido,
+    string Email,
+    DateTime CreatedAt
+);
+```
+- **`GetUsuariosQuery.cs`**:
+```csharp
+using Api.Application.Common;
+using MediatR;
+
+namespace Api.Application.Features.Usuarios.GetUsuarios;
+
+public record GetUsuariosQuery() : IRequest<Result<List<UsuarioResponse>>>;
+```
+- **`GetUsuariosQueryHandler.cs`**:
+```csharp
+using Api.Application.Common;
+using Api.Infrastructure.Data;
+using MediatR;
+using Microsoft.EntityFrameworkCore;
+
+namespace Api.Application.Features.Usuarios.GetUsuarios;
+
+public class GetUsuariosQueryHandler : IRequestHandler<GetUsuariosQuery, Result<List<UsuarioResponse>>>
+{
+    private readonly ApplicationDbContext _context;
+
+    public GetUsuariosQueryHandler(ApplicationDbContext context)
+    {
+        _context = context;
+    }
+
+    public async Task<Result<List<UsuarioResponse>>> Handle(GetUsuariosQuery request, CancellationToken cancellationToken)
+    {
+        var usuarios = await _context.Usuarios
+            .AsNoTracking()
+            .Select(u => new UsuarioResponse(
+                u.Id,
+                u.Nombre,
+                u.Apellido,
+                u.Email.Value,
+                u.CreatedAt
+            ))
+            .ToListAsync(cancellationToken);
+
+        return Result.Success(usuarios);
+    }
+}
+```
+
+### D. Capa de Infraestructura (`Infrastructure/`)
+
+#### 1. Mapeo de Base de Datos (`Infrastructure/Data/ApplicationDbContext.cs`)
+```csharp
+using Api.Domain.Entities;
+using Api.Domain.ValueObjects;
+using Microsoft.EntityFrameworkCore;
+
+namespace Api.Infrastructure.Data;
+
+public class ApplicationDbContext : DbContext
+{
+    public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
+        : base(options)
+    {
+    }
+
+    public DbSet<Usuario> Usuarios => Set<Usuario>();
+
+    protected override void OnModelCreating(ModelBuilder modelBuilder)
+    {
+        modelBuilder.Entity<Usuario>(builder =>
+        {
+            builder.ToTable("Usuarios");
+            builder.HasKey(u => u.Id);
+            builder.Property(u => u.Nombre).IsRequired().HasMaxLength(100);
+            builder.Property(u => u.Apellido).IsRequired().HasMaxLength(100);
+
+            // Mapeo automático de Vogen Email
+            builder.Property(u => u.Email)
+                .HasConversion(new Email.EfCoreValueConverter())
+                .HasMaxLength(255)
+                .IsRequired();
+
+            builder.Property(u => u.CreatedAt).IsRequired();
+        });
+
+        base.OnModelCreating(modelBuilder);
+    }
+}
+```
+
+#### 2. Semillas con Bogus (`Infrastructure/Data/DbInitializer.cs`)
+```csharp
+using Api.Domain.Entities;
+using Api.Domain.ValueObjects;
+using Bogus;
+using Microsoft.EntityFrameworkCore;
+
+namespace Api.Infrastructure.Data;
+
+public static class DbInitializer
+{
+    public static async Task SeedAsync(ApplicationDbContext context)
+    {
+        await context.Database.EnsureCreatedAsync();
+
+        if (!await context.Usuarios.AnyAsync())
+        {
+            var userFaker = new Faker<Usuario>()
+                .CustomInstantiator(f => new Usuario(
+                    Guid.NewGuid(),
+                    f.Name.FirstName(),
+                    f.Name.LastName(),
+                    Email.From(f.Internet.Email())
+                ));
+
+            var fakeUsers = userFaker.Generate(15);
+
+            await context.Usuarios.AddRangeAsync(fakeUsers);
+            await context.SaveChangesAsync();
+        }
+    }
+}
+```
+
+### E. Controlador Web API (`Controllers/UsuariosController.cs`)
+```csharp
+using Api.Application.Features.Usuarios.CreateUsuario;
+using Api.Application.Features.Usuarios.GetUsuarios;
+using MediatR;
+using Microsoft.AspNetCore.Mvc;
+
+namespace Api.Controllers;
+
+[ApiController]
+[Route("api/[controller]")]
+public class UsuariosController : ControllerBase
+{
+    private readonly ISender _sender;
+
+    public UsuariosController(ISender sender)
+    {
+        _sender = sender;
+    }
+
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] CreateUsuarioCommand command, CancellationToken cancellationToken)
+    {
+        var result = await _sender.Send(command, cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return BadRequest(new { Error = result.Error.Code, Message = result.Error.Message });
+        }
+
+        return CreatedAtAction(nameof(Create), new { id = result.Value }, result.Value);
+    }
+
+    [HttpGet]
+    public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
+    {
+        var result = await _sender.Send(new GetUsuariosQuery(), cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return BadRequest(new { Error = result.Error.Code, Message = result.Error.Message });
+        }
+
+        return Ok(result.Value);
+    }
+}
+```
+
+```
+
 
