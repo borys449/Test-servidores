@@ -10,9 +10,11 @@ public class Usuario : Entity
     public Email Email { get; private set; }
 
     // Constructor requerido por EF Core
-    private Usuario() : base() { }
+    private Usuario()
+        : base() { }
 
-    public Usuario(Guid id, string nombre, string apellido, Email email) : base(id)
+    public Usuario(Guid id, string nombre, string apellido, Email email)
+        : base(id)
     {
         if (string.IsNullOrWhiteSpace(nombre))
             throw new ArgumentException("El nombre es requerido.", nameof(nombre));

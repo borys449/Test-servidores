@@ -14,13 +14,12 @@ public static class DbInitializer
 
         if (!await context.Usuarios.AnyAsync())
         {
-            var userFaker = new Faker<Usuario>()
-                .CustomInstantiator(f => new Usuario(
-                    Guid.NewGuid(),
-                    f.Name.FirstName(),
-                    f.Name.LastName(),
-                    Email.From(f.Internet.Email())
-                ));
+            var userFaker = new Faker<Usuario>().CustomInstantiator(f => new Usuario(
+                Guid.NewGuid(),
+                f.Name.FirstName(),
+                f.Name.LastName(),
+                Email.From(f.Internet.Email())
+            ));
 
             var fakeUsers = userFaker.Generate(15);
 

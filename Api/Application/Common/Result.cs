@@ -16,9 +16,11 @@ public class Result
     }
 
     public static Result Success() => new(true, Error.None);
+
     public static Result Failure(Error error) => new(false, error);
-    
+
     public static Result<TValue> Success<TValue>(TValue value) => new(value, true, Error.None);
+
     public static Result<TValue> Failure<TValue>(Error error) => new(default!, false, error);
 }
 
@@ -32,9 +34,12 @@ public class Result<TValue> : Result
         _value = value;
     }
 
-    public TValue Value => IsSuccess
-        ? _value
-        : throw new InvalidOperationException("No se puede acceder al valor de un resultado fallido.");
+    public TValue Value =>
+        IsSuccess
+            ? _value
+            : throw new InvalidOperationException(
+                "No se puede acceder al valor de un resultado fallido."
+            );
 }
 
 public record Error(string Code, string Message)

@@ -623,64 +623,60 @@ public class Usuario : Entity
 
 ### C. Capa de Aplicación (`Application/`)
 
-#### 1. Casos de Uso (Vertical Slices de Usuario)
+#### 1. Casos de Uso (Vertical Slices de Usuario en un Solo Archivo)
+En esta arquitectura, cada Vertical Slice/Feature se unifica en un único archivo C#. Esto agrupa el **Controlador**, el **Query/Command**, el **DTO de respuesta (si aplica)**, el **Validador (FluentValidation)** y el **Handler (MediatR)**.
 
-##### Crear Usuario (`Application/Features/Usuarios/CreateUsuario/`)
-- **`CreateUsuarioCommand.cs`**:
-```csharp
-using Api.Application.Common;
-using MediatR;
-
-namespace Api.Application.Features.Usuarios.CreateUsuario;
-
-public record CreateUsuarioCommand(
-    string Nombre,
-    string Apellido,
-    string Email
-) : IRequest<Result<Guid>>;
-```
-- **`CreateUsuarioCommandValidator.cs`**:
-```csharp
-using FluentValidation;
-
-namespace Api.Application.Features.Usuarios.CreateUsuario;
-
-public class CreateUsuarioCommandValidator : AbstractValidator<CreateUsuarioCommand>
-{
-    public CreateUsuarioCommandValidator()
-    {
-        RuleFor(x => x.Nombre)
-            .NotEmpty().WithMessage("El nombre es requerido.")
-            .MaximumLength(100).WithMessage("El nombre no puede superar los 100 caracteres.");
-
-        RuleFor(x => x.Apellido)
-            .NotEmpty().WithMessage("El apellido es requerido.")
-            .MaximumLength(100).WithMessage("El apellido no puede superar los 100 caracteres.");
-
-        RuleFor(x => x.Email)
-            .NotEmpty().WithMessage("El correo electrónico es requerido.")
-            .EmailAddress().WithMessage("El formato del correo electrónico es inválido.");
-    }
-}
-```
-- **`CreateUsuarioCommandHandler.cs`**:
+##### Crear Usuario (`Application/Features/Usuarios/CreateUsuario/CreateUsuario.cs`)
 ```csharp
 using Api.Application.Common;
 using Api.Domain.Entities;
 using Api.Domain.ValueObjects;
 using Api.Infrastructure.Data;
+using FluentValidation;
 using MediatR;
+using Microsoft.AspNetCore.Mvc;
 
 namespace Api.Application.Features.Usuarios.CreateUsuario;
+
+[ApiController]
+[Route("api/usuarios")]
+public class CreateUsuarioController : ControllerBase
+{
+    private readonly ISender _sender;
+
+    public CreateUsuarioController(ISender sender) => _sender = sender;
+
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] CreateUsuarioCommand command, CancellationToken cancellationToken)
+    {
+        var result = await _sender.Send(command, cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return BadRequest(new { Error = result.Error.Code, Message = result.Error.Message });
+        }
+
+        return CreatedAtAction(nameof(Create), new { id = result.Value }, result.Value);
+    }
+}
+
+public record CreateUsuarioCommand(string Nombre, string Apellido, string Email) : IRequest<Result<Guid>>;
+
+public class CreateUsuarioCommandValidator : AbstractValidator<CreateUsuarioCommand>
+{
+    public CreateUsuarioCommandValidator()
+    {
+        RuleFor(x => x.Nombre).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.Apellido).NotEmpty().MaximumLength(100);
+        RuleFor(x => x.Email).NotEmpty().EmailAddress();
+    }
+}
 
 public class CreateUsuarioCommandHandler : IRequestHandler<CreateUsuarioCommand, Result<Guid>>
 {
     private readonly ApplicationDbContext _context;
 
-    public CreateUsuarioCommandHandler(ApplicationDbContext context)
-    {
-        _context = context;
-    }
+    public CreateUsuarioCommandHandler(ApplicationDbContext context) => _context = context;
 
     public async Task<Result<Guid>> Handle(CreateUsuarioCommand request, CancellationToken cancellationToken)
     {
@@ -694,13 +690,7 @@ public class CreateUsuarioCommandHandler : IRequestHandler<CreateUsuarioCommand,
             return Result.Failure<Guid>(new Error("Usuario.InvalidEmail", ex.Message));
         }
 
-        var usuario = new Usuario(
-            Guid.NewGuid(),
-            request.Nombre,
-            request.Apellido,
-            email
-        );
-
+        var usuario = new Usuario(Guid.NewGuid(), request.Nombre, request.Apellido, email);
         _context.Usuarios.Add(usuario);
         await _context.SaveChangesAsync(cancellationToken);
 
@@ -709,60 +699,82 @@ public class CreateUsuarioCommandHandler : IRequestHandler<CreateUsuarioCommand,
 }
 ```
 
-##### Listar Usuarios (`Application/Features/Usuarios/GetUsuarios/`)
-- **`UsuarioResponse.cs`**:
-```csharp
-namespace Api.Application.Features.Usuarios.GetUsuarios;
-
-public record UsuarioResponse(
-    Guid Id,
-    string Nombre,
-    string Apellido,
-    string Email,
-    DateTime CreatedAt
-);
-```
-- **`GetUsuariosQuery.cs`**:
-```csharp
-using Api.Application.Common;
-using MediatR;
-
-namespace Api.Application.Features.Usuarios.GetUsuarios;
-
-public record GetUsuariosQuery() : IRequest<Result<List<UsuarioResponse>>>;
-```
-- **`GetUsuariosQueryHandler.cs`**:
+##### Listar Usuarios (`Application/Features/Usuarios/GetUsuarios/GetUsuarios.cs`)
 ```csharp
 using Api.Application.Common;
 using Api.Infrastructure.Data;
+using FluentValidation;
 using MediatR;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
 namespace Api.Application.Features.Usuarios.GetUsuarios;
 
-public class GetUsuariosQueryHandler : IRequestHandler<GetUsuariosQuery, Result<List<UsuarioResponse>>>
+[ApiController]
+[Route("api/usuarios")]
+public class GetUsuariosController : ControllerBase
+{
+    private readonly ISender _sender;
+
+    public GetUsuariosController(ISender sender) => _sender = sender;
+
+    [HttpGet]
+    public async Task<IActionResult> GetAll(
+        [FromQuery] int pageNumber = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken cancellationToken = default)
+    {
+        var query = new GetUsuariosQuery(pageNumber, pageSize);
+        var result = await _sender.Send(query, cancellationToken);
+
+        if (result.IsFailure)
+        {
+            return BadRequest(new { Error = result.Error.Code, Message = result.Error.Message });
+        }
+
+        return Ok(result.Value);
+    }
+}
+
+public record GetUsuariosQuery(int PageNumber, int PageSize) : IRequest<Result<PagedResult<UsuarioResponse>>>;
+
+public class GetUsuariosQueryValidator : AbstractValidator<GetUsuariosQuery>
+{
+    public GetUsuariosQueryValidator()
+    {
+        RuleFor(x => x.PageNumber)
+            .GreaterThanOrEqualTo(1).WithMessage("El número de página debe ser mayor o igual a 1.");
+
+        RuleFor(x => x.PageSize)
+            .GreaterThanOrEqualTo(1).WithMessage("El tamaño de página debe ser mayor o igual a 1.")
+            .LessThanOrEqualTo(100).WithMessage("El tamaño de página no puede exceder 100 registros.");
+    }
+}
+
+public record UsuarioResponse(Guid Id, string Nombre, string Apellido, string Email, DateTime CreatedAt);
+
+public class GetUsuariosQueryHandler : IRequestHandler<GetUsuariosQuery, Result<PagedResult<UsuarioResponse>>>
 {
     private readonly ApplicationDbContext _context;
 
-    public GetUsuariosQueryHandler(ApplicationDbContext context)
-    {
-        _context = context;
-    }
+    public GetUsuariosQueryHandler(ApplicationDbContext context) => _context = context;
 
-    public async Task<Result<List<UsuarioResponse>>> Handle(GetUsuariosQuery request, CancellationToken cancellationToken)
+    public async Task<Result<PagedResult<UsuarioResponse>>> Handle(GetUsuariosQuery request, CancellationToken cancellationToken)
     {
-        var usuarios = await _context.Usuarios
-            .AsNoTracking()
-            .Select(u => new UsuarioResponse(
-                u.Id,
-                u.Nombre,
-                u.Apellido,
-                u.Email.Value,
-                u.CreatedAt
-            ))
+        var queryable = _context.Usuarios.AsNoTracking();
+
+        var totalCount = await queryable.CountAsync(cancellationToken);
+
+        var items = await queryable
+            .OrderBy(u => u.CreatedAt)
+            .Skip((request.PageNumber - 1) * request.PageSize)
+            .Take(request.PageSize)
+            .Select(u => new UsuarioResponse(u.Id, u.Nombre, u.Apellido, u.Email.Value, u.CreatedAt))
             .ToListAsync(cancellationToken);
 
-        return Result.Success(usuarios);
+        var pagedResult = new PagedResult<UsuarioResponse>(items, totalCount, request.PageNumber, request.PageSize);
+
+        return Result.Success(pagedResult);
     }
 }
 ```
@@ -843,53 +855,6 @@ public static class DbInitializer
 }
 ```
 
-### E. Controlador Web API (`Controllers/UsuariosController.cs`)
-```csharp
-using Api.Application.Features.Usuarios.CreateUsuario;
-using Api.Application.Features.Usuarios.GetUsuarios;
-using MediatR;
-using Microsoft.AspNetCore.Mvc;
-
-namespace Api.Controllers;
-
-[ApiController]
-[Route("api/[controller]")]
-public class UsuariosController : ControllerBase
-{
-    private readonly ISender _sender;
-
-    public UsuariosController(ISender sender)
-    {
-        _sender = sender;
-    }
-
-    [HttpPost]
-    public async Task<IActionResult> Create([FromBody] CreateUsuarioCommand command, CancellationToken cancellationToken)
-    {
-        var result = await _sender.Send(command, cancellationToken);
-
-        if (result.IsFailure)
-        {
-            return BadRequest(new { Error = result.Error.Code, Message = result.Error.Message });
-        }
-
-        return CreatedAtAction(nameof(Create), new { id = result.Value }, result.Value);
-    }
-
-    [HttpGet]
-    public async Task<IActionResult> GetAll(CancellationToken cancellationToken)
-    {
-        var result = await _sender.Send(new GetUsuariosQuery(), cancellationToken);
-
-        if (result.IsFailure)
-        {
-            return BadRequest(new { Error = result.Error.Code, Message = result.Error.Message });
-        }
-
-        return Ok(result.Value);
-    }
-}
-```
 
 ```
 

@@ -7,9 +7,7 @@ namespace Api.Infrastructure.Data;
 public class ApplicationDbContext : DbContext
 {
     public ApplicationDbContext(DbContextOptions<ApplicationDbContext> options)
-        : base(options)
-    {
-    }
+        : base(options) { }
 
     public DbSet<Usuario> Usuarios => Set<Usuario>();
 
@@ -21,22 +19,18 @@ public class ApplicationDbContext : DbContext
 
             builder.HasKey(u => u.Id);
 
-            builder.Property(u => u.Nombre)
-                .IsRequired()
-                .HasMaxLength(100);
+            builder.Property(u => u.Nombre).IsRequired().HasMaxLength(100);
 
-            builder.Property(u => u.Apellido)
-                .IsRequired()
-                .HasMaxLength(100);
+            builder.Property(u => u.Apellido).IsRequired().HasMaxLength(100);
 
             // Mapear el Objeto de Valor de Vogen usando el EfCoreValueConverter autogenerado
-            builder.Property(u => u.Email)
+            builder
+                .Property(u => u.Email)
                 .HasConversion(new Email.EfCoreValueConverter())
                 .HasMaxLength(255)
                 .IsRequired();
 
-            builder.Property(u => u.CreatedAt)
-                .IsRequired();
+            builder.Property(u => u.CreatedAt).IsRequired();
         });
 
         base.OnModelCreating(modelBuilder);
