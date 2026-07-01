@@ -8,6 +8,8 @@ public class Usuario : Entity
     public string Nombre { get; private set; } = string.Empty;
     public string Apellido { get; private set; } = string.Empty;
     public Email Email { get; private set; }
+    public bool IsDeleted { get; private set; } = false;
+    public DateTime? DeletedAt { get; private set; }
 
     // Constructor requerido por EF Core
     private Usuario()
@@ -38,5 +40,12 @@ public class Usuario : Entity
         Nombre = nombre;
         Apellido = apellido;
         Email = email;
+    }
+
+    public void Delete()
+    {
+        if (IsDeleted) return;
+        IsDeleted = true;
+        DeletedAt = DateTime.UtcNow;
     }
 }

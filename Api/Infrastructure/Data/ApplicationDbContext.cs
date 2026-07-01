@@ -31,6 +31,10 @@ public class ApplicationDbContext : DbContext
                 .IsRequired();
 
             builder.Property(u => u.CreatedAt).IsRequired();
+
+            builder.Property(u => u.IsDeleted).IsRequired().HasDefaultValue(false);
+            builder.Property(u => u.DeletedAt);
+            builder.HasQueryFilter(u => !u.IsDeleted);
         });
 
         base.OnModelCreating(modelBuilder);

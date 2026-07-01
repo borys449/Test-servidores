@@ -37,6 +37,8 @@ public class TestDatabaseFixture : IAsyncLifetime
         // 3. Configurar el contenedor de dependencias (DI) para las pruebas
         var services = new ServiceCollection();
 
+        services.AddLogging(); // Agregar logging para el LoggingBehavior
+
         // Registrar DbContext apuntando al SQL Server del AppHost
         services.AddDbContext<ApplicationDbContext>(options =>
             options.UseSqlServer(_connectionString));
@@ -45,6 +47,7 @@ public class TestDatabaseFixture : IAsyncLifetime
         services.AddMediatR(cfg =>
         {
             cfg.RegisterServicesFromAssembly(typeof(Api.Application.Common.Result).Assembly);
+            cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(LoggingBehavior<,>));
             cfg.AddBehavior(typeof(IPipelineBehavior<,>), typeof(ValidationBehavior<,>));
         });
 
